@@ -6,7 +6,11 @@ Created on: May 19, 2017
 """
 import os
 import json
+
 import aiohttp
+import google.auth
+import google.auth.transport.requests
+
 from .client_token import Token
 from .service_account_token import ServiceAccountToken
 from .entity import Entity
@@ -53,21 +57,7 @@ class GcdConnector:
             scopes)
 
         api_endpoint = _get_api_endpoint()
-
-        self._run_query_url = DATASTORE_URL.format(
-            api_endpoint=api_endpoint,
-            project_id=self.project_id,
-            method='runQuery')
-
-        self._commit_url = DATASTORE_URL.format(
-            api_endpoint=api_endpoint,
-            project_id=self.project_id,
-            method='commit')
-
-        self._lookup_url = DATASTORE_URL.format(
-            api_endpoint=api_endpoint,
-            project_id=self.project_id,
-            method='lookup')
+        self._run_query_url, self._commit_url, self._lookup_url = _datastore_urls(self.project_id, api_endpoint)
 
     async def connect(self):
         await self._token.connect()
@@ -444,18 +434,56 @@ class GcdServiceAccountConnector(GcdConnector):
                                           session)
 
         api_endpoint = _get_api_endpoint()
+        self._run_query_url, self._commit_url, self._lookup_url = _datastore_urls(self.project_id, api_endpoint)
 
-        self._run_query_url = DATASTORE_URL.format(
-            api_endpoint=api_endpoint,
-            project_id=self.project_id,
-            method='runQuery')
 
-        self._commit_url = DATASTORE_URL.format(
-            api_endpoint=api_endpoint,
-            project_id=self.project_id,
-            method='commit')
+def check_access_token(creds):
+    """Refresh credentials if they have expired."""
+    if not creds.valid:
+        request = google.auth.transport.requests.Request()
+        creds.refresh(request)
 
-        self._lookup_url = DATASTORE_URL.format(
-            api_endpoint=api_endpoint,
-            project_id=self.project_id,
-            method='lookup')
+
+class DefaultCredentialsToken:
+    def __init__(self):
+        self.creds, self.project = google.auth.default()
+
+    async def get(self):
+        check_access_token(self.creds)
+
+        return self.creds.token
+
+    connect = get
+
+
+class ApplicationCredentialsConnector(GcdConnector):
+    def __init__(self, project_id=None, namespace_id=None):
+        self._token = DefaultCredentialsToken()
+
+        if project_id is None:
+            project_id = self._token.project
+
+        self.project_id = project_id
+        self.namespace_id = namespace_id
+
+        api_endpoint = _get_api_endpoint()
+        self._run_query_url, self._commit_url, self._lookup_url = _datastore_urls(self.project_id, api_endpoint)
+
+
+def _datastore_urls(project_id, api_endpoint):
+    _run_query_url = DATASTORE_URL.format(
+        api_endpoint=api_endpoint,
+        project_id=project_id,
+        method='runQuery')
+
+    _commit_url = DATASTORE_URL.format(
+        api_endpoint=api_endpoint,
+        project_id=project_id,
+        method='commit')
+
+    _lookup_url = DATASTORE_URL.format(
+        api_endpoint=api_endpoint,
+        project_id=project_id,
+        method='lookup')
+
+    return _run_query_url, _commit_url, _lookup_url
